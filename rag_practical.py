@@ -85,5 +85,22 @@ def ask(question: str):
     return answer
 
 if __name__ == "__main__":
-    # 7. ask() 함수 호출 및 결과 출력
-    ask("What does FAISS stand for?")
+    print("=" * 60)
+    print("🤖 RAG 대화형 질의응답 시스템이 준비되었습니다!")
+    print(" 종료하려면 'exit' 또는 'quit'을 입력하세요.")
+    print("=" * 60)
+    
+    while True:
+        try:
+            user_question = input("\n질문을 입력하세요 (영문 권장) > ").strip()
+            if not user_question:
+                continue
+            if user_question.lower() in ["exit", "quit"]:
+                print("시스템을 종료합니다. 감사합니다!")
+                break
+            
+            ask(user_question)
+        except (KeyboardInterrupt, EOFError):
+            print("\n시스템을 종료합니다. 감사합니다!")
+            break
+
