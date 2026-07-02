@@ -1,0 +1,7 @@
+langchain-text-splitters
+langchain-huggingface
+langchain-community
+faiss-cpu
+transformers
+torch
+sentence-transformers
