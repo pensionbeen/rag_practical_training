@@ -54,9 +54,10 @@ vectorstore = FAISS.from_documents(docs, embeddings)
 # 5. 검색기(Retriever) 설정 (k=2)
 retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
 
-# 6. 생성 LLM 모델 로드 (Gemini-1.5-Flash)
-print("Connecting to Google Gemini API (gemini-1.5-flash)...")
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+# 6. 생성 LLM 모델 로드 (Gemini-2.5-Flash)
+print("Connecting to Google Gemini API (gemini-2.5-flash)...")
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+
 
 def ask(question: str):
     # 질문에 관련된 문서 검색
