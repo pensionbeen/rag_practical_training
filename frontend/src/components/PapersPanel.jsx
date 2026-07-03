@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import PaperDetailDrawer from './PaperDetailDrawer'
+import { searchPapers, saveConcept, getFolders, getConcepts, reindexVault } from '../config/api'
 
 const mockPapers = [
   {
@@ -54,23 +55,59 @@ export default function PapersPanel() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [papers, setPapers] = useState([])
+  const [folders, setFolders] = useState([])
+  const [concepts, setConcepts] = useState([])
   const [menu, setMenu] = useState(null)
   const [activePaper, setActivePaper] = useState(null)
   const [detailType, setDetailType] = useState('abstract')
 
+  const fetchDataList = async () => {
+    try {
+      const [folderList, conceptList] = await Promise.all([getFolders(), getConcepts()])
+      setFolders(folderList)
+      setConcepts(conceptList)
+    } catch (err) {
+      console.error('Failed to load folders/concepts:', err)
+    }
+  }
+
   useEffect(() => {
     const handleWindowClick = () => setMenu(null)
     window.addEventListener('click', handleWindowClick)
+    
+    fetchDataList()
+
     return () => window.removeEventListener('click', handleWindowClick)
   }, [])
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
+    if (!query.trim()) return
     setLoading(true)
-    setTimeout(() => {
-      setPapers(query.trim() ? mockPapers : [])
+    try {
+      const data = await searchPapers(query.trim())
+      const mapped = data.map((item, idx) => ({
+        id: idx + 1,
+        index: String(idx + 1).padStart(2, '0'),
+        title: item.title,
+        meta: `${item.authors || '미상'} · ArXiv · ${item.published ? item.published.slice(0, 10) : ''}`,
+        abstract: item.summary,
+        toc: '학술 논문의 초록(Abstract) 요약 내용이 서랍 하단에 표시되며, 이를 옵시디언에 직접 병합 및 추가 저장할 수 있습니다.',
+        link: item.link,
+        authors: item.authors,
+        summary: item.summary
+      }))
+      setPapers(mapped)
+    } catch (err) {
+      alert('논문 검색 실패: ' + err.message)
+    } finally {
       setLoading(false)
-    }, 600)
-    // TODO: DBpia Open API 논문 검색 및 결과 렌더링
+    }
+  }
+
+  const handleSaveConcept = async (conceptName, content, category) => {
+    await saveConcept(conceptName, content, category)
+    await reindexVault() // RAG 동기화
+    await fetchDataList()
   }
 
   const openPaperMenu = (event, paper) => {
@@ -138,7 +175,14 @@ export default function PapersPanel() {
         </div>
       )}
 
-      <PaperDetailDrawer paper={activePaper} type={detailType} onClose={() => setActivePaper(null)} />
+      <PaperDetailDrawer
+        paper={activePaper}
+        type={detailType}
+        onClose={() => setActivePaper(null)}
+        onSave={handleSaveConcept}
+        folders={folders}
+        concepts={concepts}
+      />
     </section>
   )
 }
