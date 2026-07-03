@@ -1,6 +1,32 @@
 # Virtual Environment
 venv/
 .venv/
+.venv*/
 
 # Environment Variables / API Keys
 .env
+.env.local
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# FAISS Index Cache
+faiss_index_*
+faiss_index/
+*.pkl
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# 로컬 옵시디언 볼트 (사용자별 생성 데이터, 저장소에 올리지 않음)
+my_obsidian_vault/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

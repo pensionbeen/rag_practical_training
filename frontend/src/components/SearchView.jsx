@@ -6,11 +6,10 @@ export default function SearchView() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
-    <div className="relative">
-      <div className="flex justify-end mb-4">
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="px-3 py-1 rounded" style={{ border: '1px solid var(--border)', background: 'white' }}>
+    <div>
+      <div className="panel-top">
+        <p className="panel-label">개인 노트 검색과 RAG 결과</p>
+        <button type="button" className="outline-button" onClick={() => setSidebarOpen(true)}>
           자료 설정
         </button>
       </div>

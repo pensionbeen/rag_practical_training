@@ -1,0 +1,112 @@
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+export async function askQuestion(query, vaultPath = null) {
+  const response = await fetch(`${API_BASE_URL}/api/v1/ask`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query,
+      vault_path: vaultPath,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`API Error: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export async function saveConcept(conceptName, content, category = null, vaultPath = null) {
+  const response = await fetch(`${API_BASE_URL}/api/v1/obsidian/save_concept`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      concept_name: conceptName,
+      content,
+      category,
+      vault_path: vaultPath,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`API Error: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export async function saveReviewNote(question, answer, sourceFile = null, vaultPath = null) {
+  const response = await fetch(`${API_BASE_URL}/api/v1/obsidian/save`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      question,
+      answer,
+      source_file: sourceFile,
+      vault_path: vaultPath,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`API Error: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export async function uploadDocument(file, vaultPath = null) {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (vaultPath) {
+    formData.append('vault_path', vaultPath)
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/obsidian/upload_concepts`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null)
+    throw new Error(errorBody?.detail || `API Error: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export async function reindexVault(vaultPath = null) {
+  const response = await fetch(`${API_BASE_URL}/api/v1/obsidian/reindex`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      vault_path: vaultPath,
+    }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null)
+    throw new Error(errorBody?.detail || `API Error: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export async function checkServerHealth() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/`, {
+      method: 'GET',
+    })
+    return response.ok
+  } catch (error) {
+    return false
+  }
+}

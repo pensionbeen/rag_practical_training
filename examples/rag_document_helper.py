@@ -1,5 +1,6 @@
 import os
 import glob
+from pathlib import Path
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -25,9 +26,9 @@ if not os.getenv("GOOGLE_API_KEY"):
         print("❌ API Key가 입력되지 않아 종료합니다.")
         exit(1)
 
-# 문서 폴더 경로
-DOCS_DIR = "docs"
-INDEX_DIR = "faiss_index"
+# 문서 폴더 경로 (이 스크립트 기준 상대 경로)
+DOCS_DIR = Path(__file__).parent / "sample_docs"
+INDEX_DIR = Path(__file__).parent / "faiss_index"
 
 # 1. 문서 파일 로드 함수
 def load_txt_documents(directory):
