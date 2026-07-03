@@ -332,9 +332,14 @@ with tab2:
     if st.session_state.last_question:
         st.subheader("💡 Q&A 결과")
         
-        # UI 표출 규칙: 출처 정보 상단 표출
-        source_links = ", ".join([f"`{src}`" for src in st.session_state.last_sources])
-        st.info(f"💡 본 답변의 근거가 된 옵시디언 노트: {source_links}")
+        # UI 표출 규칙: 출처 정보 상단 표출 (클릭 시 옵시디언 앱에서 바로 열기 지원)
+        import urllib.parse
+        source_links_list = []
+        for src in st.session_state.last_sources:
+            obsidian_uri = f"obsidian://open?vault={urllib.parse.quote(vault_path.name)}&file={urllib.parse.quote(src)}"
+            source_links_list.append(f"[{src}]({obsidian_uri})")
+        source_links = ", ".join(source_links_list)
+        st.info(f"💡 본 답변의 근거가 된 옵시디언 노트 (클릭 시 앱에서 바로가기): {source_links}")
         
         st.write(st.session_state.last_answer)
         
