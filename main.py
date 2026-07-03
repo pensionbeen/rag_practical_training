@@ -84,6 +84,7 @@ class AskResponse(BaseModel):
     fallback_used: bool = False
     suggested_title: str | None = None
     suggested_merge_targets: list[str] = []
+    saved_papers: list[dict] = []
 
 class SaveRequest(BaseModel):
     question: str
@@ -210,6 +211,7 @@ async def ask_question(request: AskRequest):
     primary_source = "None"
     suggested_title = None
     suggested_merge_targets = []
+    saved_papers = []
     
     if not md_files:
         fallback_required = True
@@ -222,7 +224,7 @@ async def ask_question(request: AskRequest):
                     relative_source = file_path.relative_to(current_vault)
                     docs.append(Document(page_content=text_content, metadata={"source": str(relative_source)}))
                     
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
             split_docs = text_splitter.split_documents(docs)
             
             vault_hash = hashlib.md5(str(current_vault.resolve()).encode("utf-8")).hexdigest()
@@ -259,7 +261,7 @@ async def ask_question(request: AskRequest):
                     if len(suggested_merge_targets) == 3:
                         break
                         
-            retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
             retrieved_docs = retriever.invoke(request.query)
             
             if not retrieved_docs:
@@ -268,8 +270,42 @@ async def ask_question(request: AskRequest):
                 primary_source = retrieved_docs[0].metadata.get("source", "알 수 없음")
                 context = "\n\n".join([f"[{doc.metadata.get('source')}]:\n{doc.page_content}" for doc in retrieved_docs])
                 
-                prompt = f"""당신은 사용자의 옵시디언 지식 베이스를 바탕으로 답변하는 전문가입니다. 아래 제공된 참고 문서(Context)에 기반하여 질문(Question)에 대해 친절하게 한국어로 답변해 주세요.
-반드시 제공된 참고 문서(Context) 내용만을 바탕으로 답변해야 합니다. 만약 제공된 참고 문서(Context)에 질문에 대답할 수 있는 정보가 전혀 없거나 매우 부족하다면, 임의로 답변하지 말고 오직 정확히 `[FALLBACK_REQUIRED]` 라고만 출력하십시오.
+                # 지식 노트 내용에서 기존에 저장된 학술 논문 출처 패턴 파싱 (전체 파일 단위)
+                seen_files_for_papers = set()
+                for doc in retrieved_docs:
+                    src = doc.metadata.get("source")
+                    if src and src not in seen_files_for_papers:
+                        seen_files_for_papers.add(src)
+                        try:
+                            full_file_path = current_vault / src
+                            if full_file_path.exists():
+                                with open(full_file_path, "r", encoding="utf-8") as rf:
+                                    file_text = rf.read()
+                                matches = re.finditer(
+                                    r'### 📚 관련 학술 논문 출처:\s*(.*?)\n-\s*\*\*저자\*\*:\s*(.*?)\n-\s*\*\*링크\*\*:\s*(.*?)\n-\s*\*\*AI 번역 요약\*\*:\s*(.*?)(?=\n\n|\n##|\n#|\Z)',
+                                    file_text,
+                                    re.DOTALL
+                                )
+                                for match in matches:
+                                    title = match.group(1).strip()
+                                    authors = match.group(2).strip()
+                                    link = match.group(3).strip()
+                                    summary = match.group(4).strip()
+                                    saved_papers.append({
+                                        "title": title,
+                                        "authors": authors,
+                                        "link": link,
+                                        "summary": summary,
+                                        "source_file": src
+                                    })
+                        except Exception as pe:
+                            print(f"Error parsing papers from file: {pe}")
+                
+                prompt = f"""당신은 사용자의 옵시디언 지식 베이스를 바탕으로 답변하는 전문가입니다. 
+제공된 참고 문서(Context)를 최우선으로 사용하여 질문(Question)에 대해 친절하게 한국어로 답변해 주세요. 
+특히 참고 문서에 논문 정보(제목, 저자, 요약)가 기재되어 있다면, 답변 시 해당 논문 정보를 상세히 언급하고 함께 설명해 주어야 합니다.
+
+만약 제공된 참고 문서(Context)가 질문과 전혀 무관하거나 관련 내용이 아예 없다면, 오직 정확히 `[FALLBACK_REQUIRED]` 라고만 출력하십시오.
 
 Context:
 {context}
@@ -323,7 +359,8 @@ Answer:"""
         source_file=primary_source, 
         fallback_used=fallback_required, 
         suggested_title=suggested_title,
-        suggested_merge_targets=suggested_merge_targets
+        suggested_merge_targets=suggested_merge_targets,
+        saved_papers=saved_papers
     )
 
 
@@ -473,7 +510,7 @@ async def get_similar_docs(request: SimilarDocsRequest):
                     text_content = f.read()
                     relative_source = file_path.relative_to(current_vault)
                     docs.append(Document(page_content=text_content, metadata={"source": str(relative_source)}))
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
             split_docs = text_splitter.split_documents(docs)
             vectorstore = FAISS.from_documents(split_docs, embeddings)
             serialized_data = vectorstore.serialize_to_bytes()
@@ -535,6 +572,16 @@ async def save_concept(request: SaveConceptRequest):
             else:
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(f"# {request.concept_name}\n\n{request.content}")
+                    
+            # 인덱스 파일 캐시 삭제하여 다음 조회 시 무조건 최신 데이터로 인덱스 재빌드 유도
+            vault_hash = hashlib.md5(str(current_vault.resolve()).encode("utf-8")).hexdigest()
+            INDEX_FILE = Path.cwd() / f"faiss_index_{vault_hash}.pkl"
+            if INDEX_FILE.exists():
+                try:
+                    INDEX_FILE.unlink()
+                except Exception:
+                    pass
+                    
             return {"detail": f"Concept successfully saved to {file_path.name}"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to write to file: {str(e)}")
@@ -572,6 +619,16 @@ async def save_review_note(request: SaveRequest):
                     f.write(f"\n\n## ❓ 질문: {request.question} #복습필요\n")
                     f.write(f"### 💡 AI의 기존 설명:\n{request.answer}\n")
                     f.write("-" * 50 + "\n")
+                    
+            # 인덱스 파일 캐시 삭제하여 다음 조회 시 무조건 최신 데이터로 인덱스 재빌드 유도
+            vault_hash = hashlib.md5(str(current_vault.resolve()).encode("utf-8")).hexdigest()
+            INDEX_FILE = Path.cwd() / f"faiss_index_{vault_hash}.pkl"
+            if INDEX_FILE.exists():
+                try:
+                    INDEX_FILE.unlink()
+                except Exception:
+                    pass
+                    
             return {"detail": f"Review note successfully saved to {target_file.name}"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to write to file: {str(e)}")

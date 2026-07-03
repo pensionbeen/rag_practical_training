@@ -108,6 +108,8 @@ if "suggested_merge_targets" not in st.session_state:
     st.session_state.suggested_merge_targets = []
 if "last_papers" not in st.session_state:
     st.session_state.last_papers = []
+if "last_saved_papers" not in st.session_state:
+    st.session_state.last_saved_papers = []
 
 # UI 시작
 st.title("📋 옵시디언 연동형 초경량 RAG 시스템 (ObsiRAG)")
@@ -318,6 +320,7 @@ with tab2:
                         st.session_state.fallback_used = data.get("fallback_used", False)
                         st.session_state.suggested_title = data.get("suggested_title", "")
                         st.session_state.suggested_merge_targets = data.get("suggested_merge_targets", [])
+                        st.session_state.last_saved_papers = data.get("saved_papers", [])
                         
                         # 관련 학술 논문 결과 리셋 (사용자가 수동으로 버튼을 눌렀을 때만 검색하도록 변경)
                         st.session_state.last_papers = []
@@ -332,11 +335,26 @@ with tab2:
     if st.session_state.last_question:
         st.subheader("💡 Q&A 결과")
         
-        # UI 표출 규칙: 출처 정보 상단 표출
-        source_links = ", ".join([f"`{src}`" for src in st.session_state.last_sources])
-        st.info(f"💡 본 답변의 근거가 된 옵시디언 노트: {source_links}")
+        # UI 표출 규칙: 출처 정보 상단 표출 (클릭 시 옵시디언 앱에서 바로 열기 지원)
+        import urllib.parse
+        source_links_list = []
+        for src in st.session_state.last_sources:
+            obsidian_uri = f"obsidian://open?vault={urllib.parse.quote(vault_path.name)}&file={urllib.parse.quote(src)}"
+            source_links_list.append(f"[{src}]({obsidian_uri})")
+        source_links = ", ".join(source_links_list)
+        st.info(f"💡 본 답변의 근거가 된 옵시디언 노트 (클릭 시 앱에서 바로가기): {source_links}")
         
         st.write(st.session_state.last_answer)
+        
+        # 기저장된 논문 정보 표출
+        if st.session_state.last_saved_papers:
+            st.write("")
+            st.subheader("📌 이 개념 노트에 이미 저장되어 있는 학술 논문")
+            for idx, p in enumerate(st.session_state.last_saved_papers, 1):
+                with st.expander(f"📖 [{idx}] {p['title']} (출처: {p['source_file']})"):
+                    st.markdown(f"**👤 저자**: {p['authors']}")
+                    st.markdown(f"**🔗 링크**: [ArXiv 논문 페이지]({p['link']})")
+                    st.markdown(f"**💡 AI 요약 (한글)**: {p['summary']}")
         
         # 만약 외부 LLM 지식(Fallback)을 활용해 새로운 지식이 생성된 경우
         if st.session_state.fallback_used:
@@ -501,7 +519,7 @@ with tab2:
     with col_paper_query:
         paper_custom_query = st.text_input(
             "검색하고 싶은 논문 주제/키워드 입력",
-            value="",
+            value=st.session_state.last_question if st.session_state.last_question else "",
             placeholder="예: deep learning, RAG, transformer...",
             key="paper_custom_query_input"
         )
