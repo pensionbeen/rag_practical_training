@@ -88,6 +88,7 @@ class AskResponse(BaseModel):
     suggested_title: str | None = None
     suggested_merge_targets: list[str] = []
     saved_papers: list[dict] = []
+    obsidian_uri: str | None = None
 
 class SaveRequest(BaseModel):
     question: str
@@ -401,13 +402,30 @@ Answer:"""
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Fallback Error: {str(e)}")
 
+    obsidian_uri = None
+    if not fallback_required and primary_source != "Unknown" and primary_source != "None (LLM Fallback)":
+        try:
+            src_path = Path(primary_source)
+            if src_path.is_absolute():
+                rel_path = src_path.relative_to(current_vault)
+            else:
+                rel_path = src_path
+            vault_name = current_vault.name
+            from urllib.parse import quote
+            safe_rel_path = quote(str(rel_path).replace("\\", "/"))
+            safe_vault_name = quote(vault_name)
+            obsidian_uri = f"obsidian://open?vault={safe_vault_name}&file={safe_rel_path}"
+        except Exception as ue:
+            print(f"Failed to generate obsidian_uri: {ue}")
+
     return AskResponse(
         response=answer,
         source_file=primary_source,
         fallback_used=fallback_required,
         suggested_title=suggested_title,
         suggested_merge_targets=suggested_merge_targets,
-        saved_papers=saved_papers
+        saved_papers=saved_papers,
+        obsidian_uri=obsidian_uri
     )
 
 
@@ -570,15 +588,29 @@ async def save_concept(request: SaveConceptRequest):
         raise HTTPException(status_code=400, detail="Concept name and content cannot be empty.")
 
     current_vault = _resolve_vault(request.vault_path)
+    clean_filename = re.sub(r'[\\/*?:"<>|]', "", request.concept_name.strip())
+    if not clean_filename:
+        raise HTTPException(status_code=400, detail="Concept name contains only illegal filename characters.")
 
-    # 카테고리 폴더 지정 시 해당 폴더 하위에 저장
-    target_dir = current_vault
-    if request.category:
-        safe_category = re.sub(r'[\\*?:"<>|]', "", request.category.strip())
-        target_dir = current_vault / safe_category
-        target_dir.mkdir(parents=True, exist_ok=True)
+    # 1. 기존에 볼트 내 다른 하위 폴더에 동일한 파일이 존재하는지 검사
+    existing_file = None
+    for p in current_vault.rglob("*.md"):
+        if "venv" in p.parts or p.name.startswith(".") or p.name == "복습_필요_리스트.md":
+            continue
+        if p.stem == clean_filename:
+            existing_file = p
+            break
 
-    file_path = target_dir / f"{request.concept_name}.md"
+    if existing_file:
+        file_path = existing_file
+    else:
+        # 2. 새로운 개념 노트 생성 시 카테고리 지정
+        target_dir = current_vault
+        if request.category:
+            safe_category = re.sub(r'[\\*?:"<>|]', "", request.category.strip())
+            target_dir = current_vault / safe_category
+            target_dir.mkdir(parents=True, exist_ok=True)
+        file_path = target_dir / f"{clean_filename}.md"
 
     # asyncio.Lock으로 쓰기 충돌 방지
     async with file_write_lock:
@@ -664,9 +696,25 @@ async def upload_concepts(file: UploadFile = File(...), vault_path: str | None =
     if not text.strip():
         raise HTTPException(status_code=400, detail="문서의 텍스트 내용이 비어있습니다.")
 
-    # 2. 개념명 통일을 위해 기존 개념 노트 목록 수집
-    existing_concepts = [f.stem for f in current_vault.glob("*.md") if f.name != "복습_필요_리스트.md"]
-    existing_concepts_str = ", ".join(existing_concepts) if existing_concepts else "없음"
+    # 2. 개념명 통일 및 카테고리 매칭을 위해 기존 개념 노트 및 폴더 목록 수집 (재귀 스캔)
+    existing_concepts = []
+    existing_dirs = set()
+    
+    for p in current_vault.rglob("*"):
+        if "venv" in p.parts or p.name.startswith("."):
+            continue
+        if p.is_file() and p.suffix == ".md" and p.name != "복습_필요_리스트.md":
+            existing_concepts.append(p.stem)
+            rel_dir = p.parent.relative_to(current_vault)
+            if str(rel_dir) != ".":
+                existing_dirs.add(str(rel_dir).replace("\\", "/"))
+        elif p.is_dir():
+            rel_dir = p.relative_to(current_vault)
+            if str(rel_dir) != ".":
+                existing_dirs.add(str(rel_dir).replace("\\", "/"))
+
+    existing_concepts_str = ", ".join(set(existing_concepts)) if existing_concepts else "없음"
+    existing_dirs_str = ", ".join(sorted(list(existing_dirs))) if existing_dirs else "없음 (루트 저장)"
 
     # 3. LLM을 통한 개념 추출
     prompt = f"""당신은 지식 구조화 전문가입니다. 아래 입력된 문서에서 핵심 개념들을 추출하여 옵시디언 마크다운 양식으로 작성하세요.
@@ -674,16 +722,25 @@ async def upload_concepts(file: UploadFile = File(...), vault_path: str | None =
 [현재 옵시디언 볼트에 이미 존재하는 기존 개념 노트 목록]:
 ({existing_concepts_str})
 
+[현재 옵시디언 볼트에 이미 존재하는 기존 폴더(카테고리) 목록]:
+({existing_dirs_str})
+
 마크다운 출력 및 개념 명명 조건:
 1. 중요도가 높은 개념은 개념명 옆에 [#중요] 태그를 붙이고 굵게 표시할 것. (예: **개념명** [#중요])
 2. 일반 개념은 [#참고] 태그를 붙일 것.
 3. 다른 개념과 연관성이 식별되면 [[연관개념명]] 형태로 내부 링크를 걸 것.
-4. **개념명 통합 규칙 (중요)**: 새로 추출하는 개념이 위 기존 목록에 있는 개념명과 의미적으로 동일하거나 매우 유사한 경우, 절대 새로운 이름을 만들지 말고 반드시 기존 목록의 개념명을 동일하게 사용하십시오.
+4. **개념명 통합 규칙 (최우선)**: 새로 추출하는 개념이 기존 개념 노트 목록에 있는 개념과 의미상 동일하거나 매우 유사한 경우(예: '배치 정규화'와 'Batch Normalization', '합성곱 신경망'과 'CNN'), 절대 영어로 번역하거나 새로운 이름을 작성하지 말고, **반드시 기존에 존재하는 개념명을 토씨 하나 틀리지 않고 동일하게 사용하여 덮어쓰기/병합되도록 하십시오.**
 
 파일 저장 형식 조건:
-각 개념을 개별 파일로 분리하기 위해, 각 개념은 반드시 아래 구조로 작성되어야 합니다:
+각 개념을 개별 파일로 분리하고 올바른 카테고리에 저장하기 위해, 각 개념은 반드시 아래의 명확한 구조로 작성되어야 합니다. 다른 불필요한 설명은 포함하지 마십시오:
 ### 개념: [개념명]
+### 카테고리: [추천 폴더 경로]
 [여기에 개념 내용 마크다운...]
+
+* [추천 폴더 경로] 설정 규칙 (매우 중요):
+  - 각 개념의 도메인 분야(상위 분류)를 분석하여 반드시 '대분류/소분류' 형식으로 카테고리 폴더 경로를 지정해 주십시오. (예: "인공지능/딥러닝", "인공지능/머신러닝", "컴퓨터과학/알고리즘", "웹개발/백엔드")
+  - 위 [기존 폴더 목록]에 해당 개념이 속할 수 있는 적합한 폴더가 있다면 해당 경로를 우선적으로 그대로 쓰십시오.
+  - 만약 도저히 상위 카테고리를 분류하기 어렵거나 루트에 바로 저장해야 하는 일반 개념인 경우에만 "루트"라고 작성해 주십시오. (가급적 '대분류/소분류' 계층 경로를 추천하는 것을 권장합니다.)
 
 입력 문서:
 {text}
@@ -703,17 +760,34 @@ async def upload_concepts(file: UploadFile = File(...), vault_path: str | None =
             part = part.strip()
             if not part:
                 continue
+            
             lines = part.split("\n", 1)
             concept_name = lines[0].replace("[", "").replace("]", "").strip()
-            content = lines[1].strip() if len(lines) > 1 else ""
-
+            remaining = lines[1].strip() if len(lines) > 1 else ""
+            
+            category_path = ""
+            content = remaining
+            cat_match = re.match(r'^###\s*카테고리\s*:\s*(.*?)\n(.*)$', remaining, re.DOTALL)
+            if cat_match:
+                category_raw = cat_match.group(1).replace("[", "").replace("]", "").strip()
+                if category_raw and category_raw != "루트":
+                    category_path = re.sub(r'[\\*?:"<>|]', "", category_raw)
+                content = cat_match.group(2).strip()
+            
             clean_filename = re.sub(r'[\\/*?:"<>|]', "", concept_name)
             if not clean_filename:
                 continue
 
-            file_path = current_vault / f"{clean_filename}.md"
+            target_dir = current_vault
+            if category_path:
+                target_dir = current_vault / category_path
+                target_dir.mkdir(parents=True, exist_ok=True)
+
+            file_path = target_dir / f"{clean_filename}.md"
             _write_concept_file(file_path, concept_name, content)
-            saved_files.append(f"{clean_filename}.md")
+            
+            relative_saved = file_path.relative_to(current_vault)
+            saved_files.append(str(relative_saved).replace("\\", "/"))
 
         if saved_files:
             _invalidate_index_cache(current_vault)
@@ -743,3 +817,40 @@ async def reindex_vault(request: ReindexRequest):
         raise HTTPException(status_code=500, detail=f"Reindex Error: {str(e)}")
 
     return ReindexResponse(indexed_files=len(md_files))
+
+
+@app.post("/api/v1/obsidian/folders", response_model=list[str])
+async def get_folders(request: ReindexRequest):
+    """
+    옵시디언 볼트의 전체 폴더(카테고리) 목록을 재귀적으로 스캔하여 반환합니다.
+    """
+    current_vault = _resolve_vault(request.vault_path)
+    folders = set()
+    try:
+        for p in current_vault.rglob("*"):
+            if "venv" in p.parts or p.name.startswith("."):
+                continue
+            if p.is_dir():
+                rel_dir = p.relative_to(current_vault)
+                if str(rel_dir) != ".":
+                    folders.add(str(rel_dir).replace("\\", "/"))
+        return sorted(list(folders))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Folders listing failed: {str(e)}")
+
+
+@app.post("/api/v1/obsidian/concepts", response_model=list[str])
+async def get_concepts(request: ReindexRequest):
+    """
+    옵시디언 볼트의 전체 개념(마크다운 파일 stem) 목록을 재귀적으로 스캔하여 반환합니다.
+    """
+    current_vault = _resolve_vault(request.vault_path)
+    concepts = set()
+    try:
+        for p in current_vault.rglob("*.md"):
+            if "venv" in p.parts or p.name.startswith(".") or p.name == "복습_필요_리스트.md":
+                continue
+            concepts.add(p.stem)
+        return sorted(list(concepts))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Concepts listing failed: {str(e)}")
