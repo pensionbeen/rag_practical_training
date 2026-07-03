@@ -5,10 +5,6 @@ from dotenv import load_dotenv
 import streamlit as st
 from pypdf import PdfReader
 
-from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # 0. API 키 관리 및 환경변수 로드
@@ -34,9 +30,35 @@ if not os.getenv("GOOGLE_API_KEY"):
 
 # 1. 경로 관리 및 초기화 (pathlib.Path 사용)
 st.sidebar.title("📁 옵시디언 경로 설정")
-default_vault_path = str(Path.cwd() / "my_obsidian_vault")
+
+# .env에서 불러온 이전 커스텀 경로가 있으면 복원하고, 없으면 기본 디렉토리 설정
+env_vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
+if env_vault_path:
+    default_vault_path = env_vault_path
+else:
+    default_vault_path = str(Path.cwd() / "my_obsidian_vault")
+
 vault_path_str = st.sidebar.text_input("옵시디언 볼트(Vault) 절대 경로", default_vault_path)
 vault_path = Path(vault_path_str)
+
+# 경로가 새로 변경되었다면 .env에 즉시 저장하여 영구 기억
+if env_vault_path != vault_path_str:
+    try:
+        env_lines = []
+        if Path(".env").exists():
+            with open(".env", "r", encoding="utf-8") as f:
+                env_lines = f.readlines()
+        
+        env_lines = [line for line in env_lines if not line.startswith("OBSIDIAN_VAULT_PATH=")]
+        env_lines.append(f"OBSIDIAN_VAULT_PATH={vault_path_str}\n")
+        
+        with open(".env", "w", encoding="utf-8") as f:
+            f.writelines(env_lines)
+            
+        os.environ["OBSIDIAN_VAULT_PATH"] = vault_path_str
+        st.sidebar.success("💾 변경된 경로가 영구 저장되었습니다.")
+    except Exception as e:
+        pass
 
 # 폴더 생성
 if not vault_path.exists():
@@ -46,21 +68,12 @@ if not vault_path.exists():
     except Exception as e:
         st.sidebar.error(f"폴더 생성 실패: {e}")
 
-# 2. 임베딩 및 LLM 초기화 (세션 상태 캐싱으로 속도 향상)
-@st.cache_resource
-def init_embeddings():
-    # 한국어 임베딩 모델
-    return HuggingFaceEmbeddings(
-        model_name="jhgan/ko-sroberta-multitask",
-        encode_kwargs={"normalize_embeddings": True}
-    )
-
+# 2. LLM 초기화 (세션 상태 캐싱으로 속도 향상)
 @st.cache_resource
 def init_llm():
     # Gemini API 호출
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    return ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
 
-embeddings = init_embeddings()
 llm = init_llm()
 
 # 세션 상태 변수 초기화
@@ -70,6 +83,12 @@ if "last_answer" not in st.session_state:
     st.session_state.last_answer = ""
 if "last_sources" not in st.session_state:
     st.session_state.last_sources = []
+if "fallback_used" not in st.session_state:
+    st.session_state.fallback_used = False
+if "suggested_title" not in st.session_state:
+    st.session_state.suggested_title = ""
+if "suggested_merge_targets" not in st.session_state:
+    st.session_state.suggested_merge_targets = []
 
 # UI 시작
 st.title("📋 옵시디언 연동형 초경량 RAG 시스템 (ObsiRAG)")
@@ -82,43 +101,56 @@ with tab1:
     st.header("📄 외부 문서 지식 구조화")
     st.write("외부 문서(TXT, PDF)를 업로드하면 핵심 개념을 추출하여 옵시디언 마크다운 노트로 개별 저장합니다.")
     
-    uploaded_file = st.file_uploader("문서 업로드 (PDF 또는 TXT)", type=["txt", "pdf"])
+    uploaded_files = st.file_uploader("문서 업로드 (PDF 또는 TXT)", type=["txt", "pdf"], accept_multiple_files=True)
     
-    if uploaded_file is not None:
-        file_details = {"FileName": uploaded_file.name, "FileType": uploaded_file.type}
-        st.write(file_details)
-        
-        # 파일 텍스트 추출
-        text = ""
-        if uploaded_file.type == "application/pdf":
-            try:
-                pdf_reader = PdfReader(uploaded_file)
-                for page in pdf_reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-            except Exception as e:
-                st.error(f"PDF 파싱 실패: {e}")
-        else:  # text/plain
-            try:
-                text = uploaded_file.read().decode("utf-8")
-            except Exception as e:
-                st.error(f"TXT 파싱 실패: {e}")
-                
-        st.text_area("추출된 원본 텍스트 미리보기", text[:500] + "...", height=150)
+    if uploaded_files:
+        st.write(f"업로드된 파일 개수: `{len(uploaded_files)}`개")
         
         if st.button("🚀 핵심 개념 추출 및 마크다운 파일 생성", key="extract_btn"):
-            if not text.strip():
-                st.warning("문서의 텍스트 내용이 비어있습니다.")
-            else:
-                with st.spinner("Gemini를 사용하여 개념을 분석 및 추출 중..."):
-                    # 프롬프트 강제 사항 적용
+            for idx, uploaded_file in enumerate(uploaded_files, 1):
+                st.write("---")
+                st.markdown(f"### 📂 [{idx}/{len(uploaded_files)}] `{uploaded_file.name}` 처리 중...")
+                
+                # 파일 텍스트 추출
+                text = ""
+                if uploaded_file.type == "application/pdf":
+                    try:
+                        from pdf_parser import parse_pdf_to_chunks
+                        chunks = parse_pdf_to_chunks(uploaded_file)
+                        text = "\n\n".join(chunks)
+                    except Exception as e:
+                        st.error(f"[{uploaded_file.name}] PDF 파싱 실패: {e}")
+                        continue
+                else:  # text/plain
+                    try:
+                        uploaded_file.seek(0)
+                        text = uploaded_file.read().decode("utf-8")
+                    except Exception as e:
+                        st.error(f"[{uploaded_file.name}] TXT 파싱 실패: {e}")
+                        continue
+                        
+                if not text.strip():
+                    st.warning(f"[{uploaded_file.name}] 문서의 텍스트 내용이 비어있습니다.")
+                    continue
+                    
+                st.text_area(f"[{uploaded_file.name}] 추출된 텍스트 미리보기", text[:300] + "...", height=100, key=f"preview_{idx}")
+                
+                existing_concepts = [f.stem for f in vault_path.glob("*.md") if f.name != "복습_필요_리스트.md"]
+                existing_concepts_str = ", ".join(existing_concepts) if existing_concepts else "없음"
+                
+                with st.spinner(f"[{uploaded_file.name}] Gemini를 사용하여 개념을 분석 및 추출 중..."):
+                    # 프롬프트 강제 사항 및 개념명 통일 규칙 적용
                     prompt = f"""당신은 지식 구조화 전문가입니다. 아래 입력된 문서에서 핵심 개념들을 추출하여 옵시디언 마크다운 양식으로 작성하세요.
 
-마크다운 출력 조건:
+[현재 옵시디언 볼트에 이미 존재하는 기존 개념 노트 목록]:
+({existing_concepts_str})
+
+마크다운 출력 및 개념 명명 조건:
 1. 중요도가 높은 개념은 개념명 옆에 [#중요] 태그를 붙이고 굵게 표시할 것. (예: **개념명** [#중요])
 2. 일반 개념은 [#참고] 태그를 붙일 것.
 3. 다른 개념과 연관성이 식별되면 [[연관개념명]] 형태로 내부 링크를 걸 것.
+4. **개념명 통합 규칙 (중요)**: 새로 추출하는 개념이 위 기존 목록에 있는 개념명과 의미적으로 동일하거나 매우 유사한 개념(예: 한글/영어 번역어, 약어, 오타 등)인 경우, 절대 새로운 이름을 만들지 말고 반드시 **기존 목록의 개념명**을 동일하게 사용하십시오.
+   - 예시: 기존 목록에 '딥러닝'이 존재하는데 새로운 추출 대상이 'Deep Learning'이나 'DL'인 경우, 새로운 파일을 생성하지 않도록 반드시 기존 개념명인 '딥러닝'을 그대로 사용하십시오.
 
 파일 저장 형식 조건:
 각 개념을 개별 파일로 분리하기 위해, 각 개념은 반드시 아래 구조로 작성되어야 합니다:
@@ -155,19 +187,23 @@ with tab1:
                                 
                             file_path = vault_path / f"{clean_filename}.md"
                             
-                            # 옵시디언 파일 저장 (open 활용)
-                            with open(file_path, "w", encoding="utf-8") as f:
-                                f.write(f"# {concept_name}\n\n{content}")
+                            # 옵시디언 파일 저장 (개념 파일 병합 로직 - Merge 적용)
+                            if file_path.exists():
+                                with open(file_path, "a", encoding="utf-8") as f:
+                                    f.write(f"\n\n{content}")
+                            else:
+                                with open(file_path, "w", encoding="utf-8") as f:
+                                    f.write(f"# {concept_name}\n\n{content}")
                                 
                             saved_files.append(f"{clean_filename}.md")
                         
                         if saved_files:
-                            st.success(f"🎉 성공적으로 {len(saved_files)}개의 개념 노트를 생성하여 저장했습니다!")
+                            st.success(f"🎉 [{uploaded_file.name}] {len(saved_files)}개의 개념 노트를 성공적으로 저장했습니다!")
                             for sf in saved_files:
                                 st.markdown(f"- 📄 `{sf}`")
                         else:
-                            st.warning("추출된 개념 형식이 올바르지 않거나 파싱되지 않았습니다. 원본 출력을 확인해 주세요.")
-                            st.text_area("Gemini 원본 출력", response_text)
+                            st.warning(f"[{uploaded_file.name}] 추출된 개념 형식이 올바르지 않거나 파싱되지 않았습니다.")
+                            st.text_area("Gemini 원본 출력", response_text, key=f"raw_out_{idx}")
                             
                     except Exception as e:
                         st.error(f"오류가 발생했습니다: {e}")
@@ -192,49 +228,30 @@ with tab2:
         elif not md_files:
             st.error("옵시디언 폴더 내에 마크다운(*.md) 파일이 존재하지 않습니다. 먼저 1탭에서 문서를 업로드해 개념 노트를 만드세요.")
         else:
-            with st.spinner("옵시디언 볼트를 스캔하여 답변을 검색 및 생성하는 중..."):
+            with st.spinner("백엔드 서버를 통해 답변을 검색 및 생성하는 중..."):
                 try:
-                    # 1. 문서 읽기 및 청킹
-                    docs = []
-                    for file_path in md_files:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            text_content = f.read()
-                            docs.append(Document(page_content=text_content, metadata={"source": file_path.name}))
-                    
-                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
-                    split_docs = text_splitter.split_documents(docs)
-                    
-                    # 2. FAISS 로컬 인덱싱
-                    vectorstore = FAISS.from_documents(split_docs, embeddings)
-                    retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
-                    
-                    # 3. 검색 수행
-                    retrieved_docs = retriever.invoke(question)
-                    
-                    # 4. 근거 기반 프롬프트 생성 및 LLM 호출
-                    sources = list(set([doc.metadata.get("source", "알 수 없음") for doc in retrieved_docs]))
-                    context = "\n\n".join([f"[{doc.metadata.get('source')}]:\n{doc.page_content}" for doc in retrieved_docs])
-                    
-                    prompt = f"""당신은 사용자의 옵시디언 지식 베이스를 바탕으로 답변하는 전문가입니다. 아래 제공된 참고 문서(Context)에 기반하여 질문(Question)에 대해 친절하게 한국어로 답변해 주세요.
-반드시 제공된 내용만을 바탕으로 논리적으로 답변해야 하며, 정보가 없거나 부족하다면 억지로 꾸며내지 말고 솔직하게 모른다고 대답해 주세요.
-
-Context:
-{context}
-
-Question: {question}
-
-Answer:"""
-                    
-                    response = llm.invoke(prompt)
-                    answer = response.content
-                    
-                    # 세션 상태에 마지막 질답 정보 저장 (피드백용)
-                    st.session_state.last_question = question
-                    st.session_state.last_answer = answer
-                    st.session_state.last_sources = sources
-                    
+                    import requests
+                    response = requests.post(
+                        "http://127.0.0.1:8000/api/v1/ask",
+                        json={
+                            "query": question,
+                            "vault_path": str(vault_path)
+                        }
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        st.session_state.last_question = question
+                        st.session_state.last_answer = data.get("response", "")
+                        st.session_state.last_sources = [data.get("source_file", "")]
+                        st.session_state.fallback_used = data.get("fallback_used", False)
+                        st.session_state.suggested_title = data.get("suggested_title", "")
+                        st.session_state.suggested_merge_targets = data.get("suggested_merge_targets", [])
+                    elif response.status_code == 404:
+                        st.error("백엔드: 옵시디언 폴더 내에 문서가 존재하지 않습니다.")
+                    else:
+                        st.error(f"서버 에러가 발생했습니다: {response.text}")
                 except Exception as e:
-                    st.error(f"RAG 프로세스 도중 에러가 발생했습니다: {e}")
+                    st.error(f"백엔드 서버 연결 실패: {e}\n(FastAPI 서버가 구동 중인지 확인해 주세요. 실행 명령어: uvicorn main:app)")
                     
     # 결과가 있을 경우 화면에 출력
     if st.session_state.last_question:
@@ -246,20 +263,106 @@ Answer:"""
         
         st.write(st.session_state.last_answer)
         
+        # 만약 외부 LLM 지식(Fallback)을 활용해 새로운 지식이 생성된 경우
+        if st.session_state.fallback_used:
+            st.warning("💡 이 질문은 옵시디언 지식 베이스에 없는 내용입니다. 아래 설정을 통해 옵시디언 노트로 저장하실 수 있습니다.")
+            
+            # 저장 방식 선택
+            save_mode = st.radio(
+                "저장 방식 선택", 
+                ["기존 노트에 병합하기", "새로운 노트로 개별 저장"], 
+                horizontal=True,
+                key="save_mode_radio"
+            )
+            
+            if save_mode == "기존 노트에 병합하기":
+                # 백엔드에서 검색된 유사도가 높은 상위 3개 문서 목록
+                merge_targets = st.session_state.suggested_merge_targets
+                
+                if not merge_targets:
+                    st.info("병합을 추천할 만한 기존 지식 노트가 존재하지 않습니다. '새로운 노트로 개별 저장'을 선택해 주십시오.")
+                else:
+                    selected_existing_note = st.selectbox(
+                        "병합 추천 기존 지식 노트 (유사도 순 최대 3개)",
+                        merge_targets,
+                        key="merge_note_select"
+                    )
+                    
+                    if st.button("💾 선택한 기존 노트에 병합", key="merge_existing_btn"):
+                        try:
+                            # 확장자(.md)를 뺀 상대 경로 전달
+                            concept_rel_path = selected_existing_note.replace(".md", "")
+                            
+                            import requests
+                            save_response = requests.post(
+                                "http://127.0.0.1:8000/api/v1/obsidian/save_concept",
+                                json={
+                                    "concept_name": concept_rel_path,
+                                    "content": f"\n\n## ❓ 추가 질문: {st.session_state.last_question} [#참고]\n{st.session_state.last_answer}",
+                                    "category": None,
+                                    "vault_path": str(vault_path)
+                                }
+                            )
+                            if save_response.status_code == 201:
+                                st.success(f"✅ 성공적으로 '{selected_existing_note}'에 병합되었습니다!")
+                                st.session_state.fallback_used = False # 상태 초기화
+                            else:
+                                st.error(f"병합 실패: {save_response.text}")
+                        except Exception as e:
+                            st.error(f"백엔드 연결 실패: {e}")
+                            
+            else:  # 새로운 노트로 개별 저장 (불필요한 카테고리 폴더 제거)
+                custom_concept_name = st.text_input(
+                    "저장할 개념 노트 이름 (제목)", 
+                    value=st.session_state.suggested_title,
+                    key="concept_name_input"
+                )
+                
+                if st.button("💾 옵시디언에 새 개념 노드로 저장", key="save_concept_btn"):
+                    if not custom_concept_name.strip():
+                        st.error("개념 노트 이름을 입력해 주세요.")
+                    else:
+                        try:
+                            import requests
+                            save_response = requests.post(
+                                "http://127.0.0.1:8000/api/v1/obsidian/save_concept",
+                                json={
+                                    "concept_name": custom_concept_name.strip(),
+                                    "content": f"## ❓ 질문: {st.session_state.last_question} [#참고]\n{st.session_state.last_answer}",
+                                    "category": None, # 카테고리 제거로 루트에 바로 단독 저장
+                                    "vault_path": str(vault_path)
+                                }
+                            )
+                            if save_response.status_code == 201:
+                                st.success(f"✅ 성공적으로 '{custom_concept_name}.md' 지식 노트가 저장되었습니다!")
+                                st.session_state.fallback_used = False # 상태 초기화
+                            else:
+                                st.error(f"지식 저장 실패: {save_response.text}")
+                        except Exception as e:
+                            st.error(f"백엔드 연결 실패: {e}")
+                            
         st.write("---")
         # 📌 규칙 3: 미이해 개념 역저장 (피드백 루프)
         st.write("답변 내용이 이해하기 어려우셨나요? 복습 리스트에 등록하여 추후 공부하실 수 있습니다.")
         if st.button("⚠️ 이해하기 어려움 - 복습 노트에 추가", key="feedback_btn"):
-            review_file = vault_path / "복습_필요_리스트.md"
-            
             try:
-                # 파일 끝에 덧붙여 쓰기 (open 활용)
-                with open(review_file, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n## ❓ 질문: {st.session_state.last_question} #복습필요\n")
-                    f.write(f"### 💡 AI의 기존 설명:\n{st.session_state.last_answer}\n")
-                    f.write(f"*(근거 자료: {', '.join(st.session_state.last_sources)})*\n")
-                    f.write("-" * 50 + "\n")
-                    
-                st.success("✅ 복습_필요_리스트.md 파일에 개념이 추가되었습니다! 옵시디언에서 `#복습필요` 태그를 검색해 복습해 보세요.")
+                import requests
+                # 가장 유사도가 높았던 RAG 근거 파일명을 백엔드로 전달
+                primary_source = st.session_state.last_sources[0] if st.session_state.last_sources else None
+                
+                response = requests.post(
+                    "http://127.0.0.1:8000/api/v1/obsidian/save",
+                    json={
+                        "question": st.session_state.last_question,
+                        "answer": st.session_state.last_answer,
+                        "source_file": primary_source,
+                        "vault_path": str(vault_path)
+                    }
+                )
+                if response.status_code == 201:
+                    data = response.json()
+                    st.success(f"✅ 완료: {data.get('detail', '복습 파일에 추가되었습니다!')}")
+                else:
+                    st.error(f"복습 저장 실패: {response.text}")
             except Exception as e:
-                st.error(f"복습 노트 기록 실패: {e}")
+                st.error(f"백엔드 서버 연결 실패: {e}\n(FastAPI 서버가 구동 중인지 확인해 주세요. 실행 명령어: uvicorn main:app)")
