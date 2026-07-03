@@ -9,3 +9,7 @@ langchain-google-genai
 python-dotenv
 streamlit
 pypdf
+fastapi
+uvicorn
+requests
+pymupdf

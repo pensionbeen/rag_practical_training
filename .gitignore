@@ -4,3 +4,10 @@ venv/
 
 # Environment Variables / API Keys
 .env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# FAISS Index Cache
+faiss_index_*
