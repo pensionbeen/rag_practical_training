@@ -729,7 +729,18 @@ async def upload_concepts(file: UploadFile = File(...), vault_path: str | None =
 1. 중요도가 높은 개념은 개념명 옆에 [#중요] 태그를 붙이고 굵게 표시할 것. (예: **개념명** [#중요])
 2. 일반 개념은 [#참고] 태그를 붙일 것.
 3. 다른 개념과 연관성이 식별되면 [[연관개념명]] 형태로 내부 링크를 걸 것.
-4. **개념명 통합 규칙 (최우선)**: 새로 추출하는 개념이 기존 개념 노트 목록에 있는 개념과 의미상 동일하거나 매우 유사한 경우(예: '배치 정규화'와 'Batch Normalization', '합성곱 신경망'과 'CNN'), 절대 영어로 번역하거나 새로운 이름을 작성하지 말고, **반드시 기존에 존재하는 개념명을 토씨 하나 틀리지 않고 동일하게 사용하여 덮어쓰기/병합되도록 하십시오.**
+4. **개념명 통합 규칙 (최우선)**:
+   - 새로 추출하는 개념이 기존 개념 노트 목록에 있는 개념과 의미상 동일하거나 매우 유사한 경우(예: '배치 정규화'와 'Batch Normalization', '합성곱 신경망'과 'CNN', '딥러닝'과 'DL'), 절대 새로운 이름을 작성하지 말고, **반드시 기존에 존재하는 개념명을 토씨 하나 틀리지 않고 동일하게 사용하여 덮어쓰기/병합되도록 하십시오.**
+   - 기존 목록에 없더라도, 이번 문서에서 추출되는 개념들 중 의미적으로 동일한 개념(예: 동의어, 한글/영문 약어 혼용)이 있다면 한쪽(가급적 한글 완칭)으로 명칭을 완전히 통일하고 본문 내에 함께 설명하십시오. (예: '딥러닝'과 'DL'을 각각 분리하여 두 개의 개념으로 추출하지 말고, '딥러닝' 하나로만 추출한 후 본문에 'DL(Deep Learning)이라고도 한다'라고 기술하십시오.)
+
+옵시디언 계층적 구조 설정 조건 (필수):
+1. **노트 내부 계층 연결**: 개념 노트의 맨 상단에 해당 개념의 상위(부모) 개념과 하위(자식) 개념을 분석하여 내부 링크로 연결하십시오.
+   - 예시:
+     - 상위 개념: [[상위개념명]]
+     - 하위 개념: [[하위개념1]], [[하위개념2]] (없으면 생략 가능)
+2. **계층형 태그 추가**: 추천 폴더 경로에 맞춰 옵시디언의 계층형 태그를 마크다운 내용에 포함하십시오.
+   - 예시: 카테고리가 `인공지능/딥러닝` 이라면 노트 내용 내에 `#인공지능/딥러닝` 형식의 계층형 태그를 추가하십시오.
+3. **노트 본문 계층화**: 단순히 텍스트를 길게 서술하지 말고, 제목 헤더(`##`, `###`)를 사용하여 개념 정의, 특징, 적용 사례 등을 계층적으로 분할하여 마크다운을 작성하십시오.
 
 파일 저장 형식 조건:
 각 개념을 개별 파일로 분리하고 올바른 카테고리에 저장하기 위해, 각 개념은 반드시 아래의 명확한 구조로 작성되어야 합니다. 다른 불필요한 설명은 포함하지 마십시오:
@@ -738,9 +749,9 @@ async def upload_concepts(file: UploadFile = File(...), vault_path: str | None =
 [여기에 개념 내용 마크다운...]
 
 * [추천 폴더 경로] 설정 규칙 (매우 중요):
-  - 각 개념의 도메인 분야(상위 분류)를 분석하여 반드시 '대분류/소분류' 형식으로 카테고리 폴더 경로를 지정해 주십시오. (예: "인공지능/딥러닝", "인공지능/머신러닝", "컴퓨터과학/알고리즘", "웹개발/백엔드")
+  - 각 개념의 도메인 분야(상위 분류)를 분석하여 계층 구조를 갖춘 카테고리 폴더 경로를 지정해 주십시오. 가급적 '대분류/중분류/소분류' 등 깊이 있는 계층 경로로 설계해 주십시오. (예: "인공지능/딥러닝/최적화", "컴퓨터과학/알고리즘/정렬", "웹개발/백엔드/데이터베이스")
   - 위 [기존 폴더 목록]에 해당 개념이 속할 수 있는 적합한 폴더가 있다면 해당 경로를 우선적으로 그대로 쓰십시오.
-  - 만약 도저히 상위 카테고리를 분류하기 어렵거나 루트에 바로 저장해야 하는 일반 개념인 경우에만 "루트"라고 작성해 주십시오. (가급적 '대분류/소분류' 계층 경로를 추천하는 것을 권장합니다.)
+  - 만약 도저히 상위 카테고리를 분류하기 어렵거나 루트에 바로 저장해야 하는 일반 개념인 경우에만 "루트"라고 작성해 주십시오.
 
 입력 문서:
 {text}
@@ -754,6 +765,15 @@ async def upload_concepts(file: UploadFile = File(...), vault_path: str | None =
     # 4. 개념 파싱 및 파일 저장 (기존 노트가 있으면 병합)
     parts = re.split(r'### 개념:', response_text)
     saved_files = []
+
+    # 기존 옵시디언 볼트 내 마크다운 파일 맵 빌드 (공백 제거, 소문자화하여 동의어 및 포맷 불일치 대응)
+    existing_file_map = {}
+    for p in current_vault.rglob("*.md"):
+        if "venv" in p.parts or p.name.startswith(".") or p.name == "복습_필요_리스트.md":
+            continue
+        normalized_name = p.stem.lower().replace(" ", "")
+        if normalized_name not in existing_file_map:
+            existing_file_map[normalized_name] = p
 
     async with file_write_lock:
         for part in parts:
@@ -778,12 +798,22 @@ async def upload_concepts(file: UploadFile = File(...), vault_path: str | None =
             if not clean_filename:
                 continue
 
-            target_dir = current_vault
-            if category_path:
-                target_dir = current_vault / category_path
-                target_dir.mkdir(parents=True, exist_ok=True)
+            normalized_new_name = clean_filename.lower().replace(" ", "")
 
-            file_path = target_dir / f"{clean_filename}.md"
+            # 기존에 동일한(또는 유사한) 이름의 파일이 존재하는지 검사 (대소문자/공백 무시 비교)
+            if normalized_new_name in existing_file_map:
+                file_path = existing_file_map[normalized_new_name]
+                # 기존 파일이 있다면 파일 이름의 철자와 대소문자를 기존 파일 기준으로 통일
+                concept_name = file_path.stem
+            else:
+                target_dir = current_vault
+                if category_path:
+                    target_dir = current_vault / category_path
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                file_path = target_dir / f"{clean_filename}.md"
+                # 실시간으로 추가하여 이번 배치 업로드 도중 발생하는 중복도 방지
+                existing_file_map[normalized_new_name] = file_path
+
             _write_concept_file(file_path, concept_name, content)
             
             relative_saved = file_path.relative_to(current_vault)
