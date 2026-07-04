@@ -142,13 +142,14 @@ export async function getConcepts(vaultPath = null) {
   return response.json()
 }
 
-export async function searchPapers(query) {
+export async function searchPapers(query, signal = null) {
   const response = await fetch(`${API_BASE_URL}/api/v1/papers/search`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ query }),
+    signal,
   })
 
   if (!response.ok) {

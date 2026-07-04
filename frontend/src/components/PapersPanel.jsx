@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import PaperDetailDrawer from './PaperDetailDrawer'
 import { searchPapers, saveConcept, getFolders, getConcepts, reindexVault } from '../config/api'
@@ -60,6 +60,7 @@ export default function PapersPanel({ vaultPath }) {
   const [menu, setMenu] = useState(null)
   const [activePaper, setActivePaper] = useState(null)
   const [detailType, setDetailType] = useState('abstract')
+  const abortControllerRef = useRef(null)
 
   const fetchDataList = async () => {
     try {
@@ -84,10 +85,15 @@ export default function PapersPanel({ vaultPath }) {
   }, [vaultPath])
 
   const handleSearch = async () => {
+    if (loading) return
     if (!query.trim()) return
+
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     setLoading(true)
     try {
-      const data = await searchPapers(query.trim())
+      const data = await searchPapers(query.trim(), controller.signal)
       const mapped = data.map((item, idx) => ({
         id: idx + 1,
         index: String(idx + 1).padStart(2, '0'),
@@ -101,10 +107,17 @@ export default function PapersPanel({ vaultPath }) {
       }))
       setPapers(mapped)
     } catch (err) {
-      alert('논문 검색 실패: ' + err.message)
+      if (err.name !== 'AbortError') {
+        alert('논문 검색 실패: ' + err.message)
+      }
     } finally {
       setLoading(false)
+      abortControllerRef.current = null
     }
+  }
+
+  const handleCancelSearch = () => {
+    abortControllerRef.current?.abort()
   }
 
   const handleSaveConcept = async (conceptName, content, category) => {
@@ -137,9 +150,16 @@ export default function PapersPanel({ vaultPath }) {
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSearch()}
           placeholder="연구 키워드를 입력하세요"
+          disabled={loading}
         />
-        <button type="button" className="paper-button" onClick={handleSearch} disabled={loading}>
-          {loading ? <span className="spinner" /> : '추천받기'}
+        <button
+          type="button"
+          className="paper-button"
+          onClick={loading ? handleCancelSearch : handleSearch}
+          title={loading ? '검색 중지' : '추천받기'}
+        >
+          {loading ? <span className="spinner" /> : null}
+          {loading ? '중지' : '추천받기'}
         </button>
       </div>
 
