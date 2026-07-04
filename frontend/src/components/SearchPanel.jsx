@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Search, Loader2, ExternalLink } from 'lucide-react'
 import { askQuestion, saveConcept, saveReviewNote, getFolders, getSimilarDocs, reindexVault } from '../config/api'
 
-export default function SearchPanel() {
+export default function SearchPanel({ vaultPath }) {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState([])
@@ -21,18 +21,18 @@ export default function SearchPanel() {
   const [savingConcept, setSavingConcept] = useState(false)
   const [savingReview, setSavingReview] = useState(false)
 
-  // Load folders on mount
+  // Load folders on mount or vaultPath change
   useEffect(() => {
     const fetchFolders = async () => {
       try {
-        const folderList = await getFolders()
+        const folderList = await getFolders(vaultPath || null)
         setFolders(folderList)
       } catch (err) {
         console.error('Failed to load folders:', err)
       }
     }
     fetchFolders()
-  }, [])
+  }, [vaultPath])
 
   // When selected changes, fetch the top 5 similar concepts for the query/title
   useEffect(() => {
@@ -41,7 +41,7 @@ export default function SearchPanel() {
       
       const fetchSimilar = async () => {
         try {
-          const similar = await getSimilarDocs(selected.title)
+          const similar = await getSimilarDocs(selected.title, vaultPath || null)
           setSimilarConcepts(similar)
           if (similar.length > 0) {
             setSelectedConcept(similar[0])
@@ -62,7 +62,7 @@ export default function SearchPanel() {
       setSelectedConcept('')
       setSimilarConcepts([])
     }
-  }, [selected])
+  }, [selected, vaultPath])
 
   const handleSearch = async () => {
     if (!query.trim()) {
@@ -75,7 +75,7 @@ export default function SearchPanel() {
     setError(null)
 
     try {
-      const data = await askQuestion(query)
+      const data = await askQuestion(query, vaultPath || null)
       setResults([
         {
           id: 'answer',
@@ -85,7 +85,8 @@ export default function SearchPanel() {
           source: data.source_file,
           fallback: data.fallback_used,
           mergeTargets: data.suggested_merge_targets || [],
-          obsidianUri: data.obsidian_uri
+          obsidianUri: data.obsidian_uri,
+          savedPapers: data.saved_papers || []
         }
       ])
       setStatus(data.fallback_used ? 'fallback' : 'rag')
@@ -120,12 +121,12 @@ export default function SearchPanel() {
     setSavingConcept(true)
 
     try {
-      await saveConcept(nameToSave, selected.content, catToSave)
-      await reindexVault()
+      await saveConcept(nameToSave, selected.content, catToSave, vaultPath || null)
+      await reindexVault(vaultPath || null)
       alert('성공적으로 옵시디언 개념 노트에 저장/병합했습니다!')
       
       // Refresh folders
-      const folderList = await getFolders()
+      const folderList = await getFolders(vaultPath || null)
       setFolders(folderList)
       setSelected(null)
     } catch (err) {
@@ -138,7 +139,7 @@ export default function SearchPanel() {
   const handleSaveReview = async () => {
     setSavingReview(true)
     try {
-      await saveReviewNote(query, selected.content, selected.source)
+      await saveReviewNote(query, selected.content, selected.source, vaultPath || null)
       alert('성공적으로 복습 필요 리스트에 추가되었습니다!')
       setSelected(null)
     } catch (err) {
@@ -241,6 +242,30 @@ export default function SearchPanel() {
                   </a>
                 )}
               </div>
+              
+              {selected.savedPapers && selected.savedPapers.length > 0 && (
+                <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                  <p className="panel-label" style={{ marginBottom: 10 }}>📚 연동된 학술 논문 출처</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {selected.savedPapers.map((paper, idx) => (
+                      <div key={idx} style={{ background: 'var(--bg)', padding: '10px 14px', borderRadius: '4px', border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                          <h4 style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text)' }}>{paper.title}</h4>
+                          {paper.link && (
+                            <a href={paper.link} target="_blank" rel="noreferrer" style={{ fontSize: '0.75rem', color: 'var(--accent)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 'bold' }}>
+                              원문 <ExternalLink size={10} />
+                            </a>
+                          )}
+                        </div>
+                        <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--text-2)' }}>저자: {paper.authors}</p>
+                        {paper.summary && (
+                          <p style={{ margin: '6px 0 0', fontSize: '0.8rem', color: 'var(--text-2)', lineHeight: '1.4', background: 'rgba(0,0,0,0.02)', padding: '6px 10px', borderRadius: '4px' }}>{paper.summary}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>

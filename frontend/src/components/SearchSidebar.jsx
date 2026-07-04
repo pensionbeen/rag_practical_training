@@ -1,10 +1,14 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { uploadDocument, reindexVault } from '../config/api'
 
-export default function SearchSidebar({ open, onClose }) {
-  const [vaultPath, setVaultPath] = useState('')
+export default function SearchSidebar({ open, onClose, vaultPath: initialVaultPath, onSaveVaultPath }) {
+  const [vaultPath, setVaultPath] = useState(initialVaultPath)
   const [uploads, setUploads] = useState([])
   const fileRef = useRef(null)
+
+  useEffect(() => {
+    setVaultPath(initialVaultPath)
+  }, [initialVaultPath])
 
   const updateUploadStatus = (id, status) => {
     setUploads(prev => prev.map(item => (item.id === id ? { ...item, status } : item)))
@@ -33,6 +37,11 @@ export default function SearchSidebar({ open, onClose }) {
 
   const removeUpload = id => setUploads(prev => prev.filter(item => item.id !== id))
 
+  const handleSave = () => {
+    onSaveVaultPath(vaultPath)
+    alert('옵시디언 볼트 경로가 저장되었습니다.')
+  }
+
   return (
     <>
       {open && <div className="drawer-backdrop" onClick={onClose} />}
@@ -53,10 +62,11 @@ export default function SearchSidebar({ open, onClose }) {
               onChange={e => setVaultPath(e.target.value)}
               placeholder="C:\\Users\\...\\vault"
             />
-            <button type="button" className="drawer-button" onClick={() => {}}
+            <button type="button" className="drawer-button" onClick={handleSave}
             >저장</button>
           </div>
         </div>
+
 
         <div className="drawer-section">
           <label>파일 업로드 (드래그앤드롭 지원)</label>

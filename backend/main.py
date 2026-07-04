@@ -130,10 +130,14 @@ class SimilarDocsRequest(BaseModel):
 def _resolve_vault(vault_path: str | None) -> Path:
     """요청에 사용자 지정 볼트 경로가 있으면 그 경로를, 없거나 유효하지 않으면 기본 볼트 경로를 반환합니다."""
     if vault_path:
-        custom_path = Path(vault_path)
-        if custom_path.exists() and custom_path.is_dir():
+        try:
+            custom_path = Path(vault_path.strip())
+            custom_path.mkdir(parents=True, exist_ok=True)
             return custom_path
+        except Exception as e:
+            print(f"Error resolving/creating custom vault path '{vault_path}': {e}")
     return VAULT_PATH
+
 
 
 def _write_concept_file(file_path: Path, concept_name: str, content: str) -> None:
