@@ -10,5 +10,6 @@ python-dotenv
 pypdf
 fastapi
 uvicorn
+python-multipart
 requests
 pymupdf
