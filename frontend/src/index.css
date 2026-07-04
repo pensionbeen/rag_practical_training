@@ -507,7 +507,203 @@ button {
   color: var(--text-2);
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(23, 24, 26, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 100;
+}
+
+.modal-panel {
+  width: 100%;
+  max-width: 900px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: 0 24px 60px rgba(23, 24, 26, 0.22);
+}
+
+.modal-body {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+.modal-main,
+.modal-side {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.modal-main::-webkit-scrollbar,
+.modal-side::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal-main::-webkit-scrollbar-track,
+.modal-side::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal-main::-webkit-scrollbar-thumb,
+.modal-side::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+
+.modal-main::-webkit-scrollbar-thumb:hover,
+.modal-side::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
+.modal-main {
+  padding-right: 4px;
+}
+
+.modal-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-left: 1px solid var(--border);
+  padding-left: 20px;
+}
+
+@media (max-width: 860px) {
+  .modal-body {
+    grid-template-columns: 1fr;
+  }
+  .modal-side {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    padding-left: 0;
+    padding-top: 16px;
+  }
+}
+
+.obsidian-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.obsidian-col + .obsidian-col {
+  margin-top: 6px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.field-label {
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+
+.section-label {
+  margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.save-mode-tabs {
+  display: flex;
+  gap: 18px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+.save-mode-tab {
+  padding: 0 0 8px;
+  margin-bottom: -1px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+}
+
+.save-mode-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.save-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 154px;
+}
+
+.obsidian-submit-button {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: white;
+  font-weight: 600;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.obsidian-submit-button:hover {
+  background: var(--accent-hover);
+}
+
+.obsidian-submit-button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.review-button {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--amber);
+  font-weight: 600;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.review-button:hover {
+  border-color: var(--amber);
+  background: rgba(180, 83, 9, 0.06);
+}
+
+.review-button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.review-button .spinner {
+  border-color: rgba(180, 83, 9, 0.25);
+  border-top-color: var(--amber);
+}
+
 .spinner {
+  display: inline-block;
   width: 16px;
   height: 16px;
   border: 2px solid rgba(255,255,255,0.7);

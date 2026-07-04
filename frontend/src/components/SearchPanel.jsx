@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Search, Loader2, ExternalLink } from 'lucide-react'
 import { askQuestion, saveConcept, saveReviewNote, getFolders, getSimilarDocs, reindexVault } from '../config/api'
 
@@ -20,6 +20,7 @@ export default function SearchPanel({ vaultPath }) {
   const [customCat, setCustomCat] = useState('')
   const [savingConcept, setSavingConcept] = useState(false)
   const [savingReview, setSavingReview] = useState(false)
+  const abortControllerRef = useRef(null)
 
   // Load folders on mount or vaultPath change
   useEffect(() => {
@@ -65,17 +66,22 @@ export default function SearchPanel({ vaultPath }) {
   }, [selected, vaultPath])
 
   const handleSearch = async () => {
+    if (loading) return
+
     if (!query.trim()) {
       setResults([])
       setStatus('empty')
       return
     }
 
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     setLoading(true)
     setError(null)
 
     try {
-      const data = await askQuestion(query, vaultPath || null)
+      const data = await askQuestion(query, vaultPath || null, controller.signal)
       setResults([
         {
           id: 'answer',
@@ -91,12 +97,21 @@ export default function SearchPanel({ vaultPath }) {
       ])
       setStatus(data.fallback_used ? 'fallback' : 'rag')
     } catch (err) {
-      setError('백엔드 서버에 연결할 수 없습니다. FastAPI 서버(uvicorn backend.main:app)가 실행 중인지 확인해 주세요.')
-      setResults([])
-      setStatus('error')
+      if (err.name === 'AbortError') {
+        setStatus('empty')
+      } else {
+        setError('백엔드 서버에 연결할 수 없습니다. FastAPI 서버(uvicorn backend.main:app)가 실행 중인지 확인해 주세요.')
+        setResults([])
+        setStatus('error')
+      }
     } finally {
       setLoading(false)
+      abortControllerRef.current = null
     }
+  }
+
+  const handleCancelSearch = () => {
+    abortControllerRef.current?.abort()
   }
 
   const handleSaveConcept = async () => {
@@ -171,10 +186,16 @@ export default function SearchPanel({ vaultPath }) {
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSearch()}
           placeholder="질문을 입력하세요"
+          disabled={loading}
         />
-        <button type="button" className="search-button" onClick={handleSearch} disabled={loading}>
+        <button
+          type="button"
+          className="search-button"
+          onClick={loading ? handleCancelSearch : handleSearch}
+          title={loading ? '검색 중지' : '검색'}
+        >
           {loading ? <span className="spinner" /> : <Search size={16} />}
-          검색
+          {loading ? '중지' : '검색'}
         </button>
       </div>
 
@@ -204,7 +225,7 @@ export default function SearchPanel({ vaultPath }) {
 
       {selected && (
         <div className="modal-backdrop" onClick={() => setSelected(null)}>
-          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: '650px', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+          <div className="modal-panel" onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
               <div>
                 <p className="panel-label">검색 결과 상세</p>
@@ -212,175 +233,142 @@ export default function SearchPanel({ vaultPath }) {
               </div>
               <button type="button" className="drawer-close" onClick={() => setSelected(null)}>닫기</button>
             </div>
-            
-            <div style={{ flex: '1', overflowY: 'auto', marginBottom: 18 }}>
-              <div className="paper-detail-content" style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', background: 'var(--bg)', padding: '16px', borderRadius: '6px', fontSize: '0.95rem' }}>
-                {selected.content}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-                <div className="paper-detail-meta" style={{ margin: 0 }}>출처: {getDisplaySource(selected.source)}</div>
-                {isObsidianLinkAvailable && (
-                  <a
-                    href={obsidianUri}
-                    className="outline-button"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      fontSize: '0.8rem',
-                      padding: '6px 12px',
-                      textDecoration: 'none',
-                      color: 'var(--accent)',
-                      border: '1px solid var(--accent)',
-                      borderRadius: '4px',
-                      fontWeight: 'bold',
-                      background: 'transparent'
-                    }}
-                  >
-                    <ExternalLink size={12} />
-                    옵시디언에서 파일 열기
-                  </a>
-                )}
-              </div>
-              
-              {selected.savedPapers && selected.savedPapers.length > 0 && (
-                <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
-                  <p className="panel-label" style={{ marginBottom: 10 }}>📚 연동된 학술 논문 출처</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {selected.savedPapers.map((paper, idx) => (
-                      <div key={idx} style={{ background: 'var(--bg)', padding: '10px 14px', borderRadius: '4px', border: '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-                          <h4 style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text)' }}>{paper.title}</h4>
-                          {paper.link && (
-                            <a href={paper.link} target="_blank" rel="noreferrer" style={{ fontSize: '0.75rem', color: 'var(--accent)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 'bold' }}>
-                              원문 <ExternalLink size={10} />
-                            </a>
+
+            <div className="modal-body">
+              <div className="modal-main">
+                <div className="paper-detail-content" style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', background: 'var(--bg)', padding: '16px', borderRadius: '6px', fontSize: '0.95rem' }}>
+                  {selected.content}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                  <div className="paper-detail-meta" style={{ margin: 0 }}>출처: {getDisplaySource(selected.source)}</div>
+                  {isObsidianLinkAvailable && (
+                    <a
+                      href={obsidianUri}
+                      className="outline-button"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontSize: '0.8rem',
+                        padding: '6px 12px',
+                        textDecoration: 'none',
+                        color: 'var(--accent)',
+                        border: '1px solid var(--accent)',
+                        borderRadius: '4px',
+                        fontWeight: 'bold',
+                        background: 'transparent'
+                      }}
+                    >
+                      <ExternalLink size={12} />
+                      옵시디언에서 파일 열기
+                    </a>
+                  )}
+                </div>
+
+                {selected.savedPapers && selected.savedPapers.length > 0 && (
+                  <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                    <p className="panel-label" style={{ marginBottom: 10 }}>📚 연동된 학술 논문 출처</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {selected.savedPapers.map((paper, idx) => (
+                        <div key={idx} style={{ background: 'var(--bg)', padding: '10px 14px', borderRadius: '4px', border: '1px solid var(--border)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                            <h4 style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text)' }}>{paper.title}</h4>
+                            {paper.link && (
+                              <a href={paper.link} target="_blank" rel="noreferrer" style={{ fontSize: '0.75rem', color: 'var(--accent)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 'bold' }}>
+                                원문 <ExternalLink size={10} />
+                              </a>
+                            )}
+                          </div>
+                          <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--text-2)' }}>저자: {paper.authors}</p>
+                          {paper.summary && (
+                            <p style={{ margin: '6px 0 0', fontSize: '0.8rem', color: 'var(--text-2)', lineHeight: '1.4', background: 'rgba(0,0,0,0.02)', padding: '6px 10px', borderRadius: '4px' }}>{paper.summary}</p>
                           )}
                         </div>
-                        <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--text-2)' }}>저자: {paper.authors}</p>
-                        {paper.summary && (
-                          <p style={{ margin: '6px 0 0', fontSize: '0.8rem', color: 'var(--text-2)', lineHeight: '1.4', background: 'rgba(0,0,0,0.02)', padding: '6px 10px', borderRadius: '4px' }}>{paper.summary}</p>
-                        )}
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
 
-            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-              <p className="panel-label" style={{ marginBottom: 12 }}>💾 옵시디언 연동 제어</p>
-              
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              <div className="modal-side">
+                <p className="panel-label">💾 옵시디언 연동 제어</p>
+
                 {/* 개념 노트 저장 섹션 */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--text-2)', marginBottom: 2 }}>1. 개념 노트 저장/병합 방식 선택</label>
-                  
-                  {/* SaveMode Tab Buttons */}
-                  <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: '4px', overflow: 'hidden', marginBottom: 4 }}>
+                <div className="obsidian-col">
+                  <label className="section-label">개념 노트 저장</label>
+
+                  <div className="save-mode-tabs">
                     <button
                       type="button"
-                      style={{
-                        flex: 1,
-                        padding: '6px',
-                        fontSize: '0.75rem',
-                        border: 'none',
-                        background: saveMode === 'merge' ? 'var(--accent)' : 'var(--bg)',
-                        color: saveMode === 'merge' ? 'white' : 'var(--text-2)',
-                        fontWeight: 'bold'
-                      }}
+                      className={`save-mode-tab${saveMode === 'merge' ? ' active' : ''}`}
                       onClick={() => setSaveMode('merge')}
                     >
                       기존 노트에 병합
                     </button>
                     <button
                       type="button"
-                      style={{
-                        flex: 1,
-                        padding: '6px',
-                        fontSize: '0.75rem',
-                        border: 'none',
-                        background: saveMode === 'new' ? 'var(--accent)' : 'var(--bg)',
-                        color: saveMode === 'new' ? 'white' : 'var(--text-2)',
-                        fontWeight: 'bold'
-                      }}
+                      className={`save-mode-tab${saveMode === 'new' ? ' active' : ''}`}
                       onClick={() => setSaveMode('new')}
                     >
                       새 노트로 저장
                     </button>
                   </div>
 
-                  {saveMode === 'merge' ? (
-                    <>
-                      <label style={{ fontSize: '0.75rem', color: 'var(--text-2)' }}>병합할 기존 개념 노트 선택 (유사도순 상위 5개)</label>
-                      <select
-                        className="drawer-input"
-                        style={{ width: '100%', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'white' }}
-                        value={selectedConcept}
-                        onChange={e => setSelectedConcept(e.target.value)}
-                      >
-                        {similarConcepts.length === 0 ? (
-                          <option value="">(연관 개념을 찾는 중이거나 없습니다)</option>
-                        ) : (
-                          similarConcepts.map(c => (
-                            <option key={c} value={c}>⭐ {c}</option>
-                          ))
-                        )}
-                      </select>
-                    </>
-                  ) : (
-                    <>
-                      <label style={{ fontSize: '0.75rem', color: 'var(--text-2)' }}>새로 저장할 개념명</label>
-                      <input
-                        className="drawer-input"
-                        style={{ width: '100%', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
-                        value={conceptName}
-                        onChange={e => setConceptName(e.target.value)}
-                        placeholder="예: 배치 정규화"
-                      />
-                      <label style={{ fontSize: '0.75rem', color: 'var(--text-2)' }}>추천 저장 카테고리 지정</label>
-                      <select
-                        className="drawer-input"
-                        style={{ width: '100%', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'white' }}
-                        value={selectedCat}
-                        onChange={e => setSelectedCat(e.target.value)}
-                      >
-                        <option value="루트">루트 (폴더 없음)</option>
-                        {folders.map(folder => (
-                          <option key={folder} value={folder}>{folder}</option>
-                        ))}
-                        <option value="직접 입력">직접 입력 (새 폴더)</option>
-                      </select>
-
-                      {selectedCat === '직접 입력' && (
+                  <div className="save-fields">
+                    {saveMode === 'merge' ? (
+                      <>
+                        <label className="field-label">병합할 기존 개념 노트 선택 (유사도순 상위 5개)</label>
+                        <select
+                          className="drawer-input"
+                          value={selectedConcept}
+                          onChange={e => setSelectedConcept(e.target.value)}
+                        >
+                          {similarConcepts.length === 0 ? (
+                            <option value="">(연관 개념을 찾는 중이거나 없습니다)</option>
+                          ) : (
+                            similarConcepts.map(c => (
+                              <option key={c} value={c}>⭐ {c}</option>
+                            ))
+                          )}
+                        </select>
+                      </>
+                    ) : (
+                      <>
+                        <label className="field-label">새로 저장할 개념명</label>
                         <input
                           className="drawer-input"
-                          style={{ width: '100%', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
-                          value={customCat}
-                          onChange={e => setCustomCat(e.target.value)}
-                          placeholder="분류 경로 (예: 인공지능/딥러닝)"
+                          value={conceptName}
+                          onChange={e => setConceptName(e.target.value)}
+                          placeholder="예: 배치 정규화"
                         />
-                      )}
-                    </>
-                  )}
+                        <label className="field-label">추천 저장 카테고리 지정</label>
+                        <select
+                          className="drawer-input"
+                          value={selectedCat}
+                          onChange={e => setSelectedCat(e.target.value)}
+                        >
+                          <option value="루트">루트 (폴더 없음)</option>
+                          {folders.map(folder => (
+                            <option key={folder} value={folder}>{folder}</option>
+                          ))}
+                          <option value="직접 입력">직접 입력 (새 폴더)</option>
+                        </select>
+
+                        {selectedCat === '직접 입력' && (
+                          <input
+                            className="drawer-input"
+                            value={customCat}
+                            onChange={e => setCustomCat(e.target.value)}
+                            placeholder="분류 경로 (예: 인공지능/딥러닝)"
+                          />
+                        )}
+                      </>
+                    )}
+                  </div>
 
                   <button
                     type="button"
-                    style={{
-                      width: '100%',
-                      padding: '8px',
-                      background: 'var(--accent)',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: 'var(--radius)',
-                      fontWeight: 'bold',
-                      fontSize: '0.85rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6,
-                      marginTop: 4
-                    }}
+                    className="obsidian-submit-button"
                     onClick={handleSaveConcept}
                     disabled={savingConcept}
                   >
@@ -390,31 +378,15 @@ export default function SearchPanel({ vaultPath }) {
                 </div>
 
                 {/* 복습 필요 리스트 섹션 */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--text-2)' }}>2. 복습 리스트에 추가</label>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-2)', margin: 0, lineHeight: '1.4' }}>
-                      질문과 현재 답변을 옵시디언의 '복습_필요_리스트.md' 파일에 자동으로 가공 및 추가 기입합니다.
-                    </p>
-                  </div>
+                <div className="obsidian-col">
+                  <label className="section-label">복습 리스트 추가</label>
+                  <p className="field-label" style={{ lineHeight: '1.4', margin: 0 }}>
+                    질문과 현재 답변을 옵시디언의 '복습_필요_리스트.md' 파일에 자동으로 가공 및 추가 기입합니다.
+                  </p>
 
                   <button
                     type="button"
-                    style={{
-                      width: '100%',
-                      padding: '10px',
-                      background: 'var(--amber)',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: 'var(--radius)',
-                      fontWeight: 'bold',
-                      fontSize: '0.85rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6,
-                      marginTop: 'auto'
-                    }}
+                    className="review-button"
                     onClick={handleSaveReview}
                     disabled={savingReview}
                   >

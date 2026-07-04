@@ -1,6 +1,6 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-export async function askQuestion(query, vaultPath = null) {
+export async function askQuestion(query, vaultPath = null, signal = null) {
   const response = await fetch(`${API_BASE_URL}/api/v1/ask`, {
     method: 'POST',
     headers: {
@@ -10,6 +10,7 @@ export async function askQuestion(query, vaultPath = null) {
       query,
       vault_path: vaultPath,
     }),
+    signal,
   })
 
   if (!response.ok) {

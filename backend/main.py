@@ -313,8 +313,8 @@ async def ask_question(request: AskRequest):
                     if len(suggested_merge_targets) == 3:
                         break
 
-            retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-            retrieved_docs = retriever.invoke(request.query)
+            retrieved_docs_with_scores = vectorstore.similarity_search_with_relevance_scores(request.query, k=4)
+            retrieved_docs = [doc for doc, _score in retrieved_docs_with_scores]
 
             if not retrieved_docs:
                 fallback_required = True
@@ -323,8 +323,13 @@ async def ask_question(request: AskRequest):
                 context = "\n\n".join([f"[{doc.metadata.get('source')}]:\n{doc.page_content}" for doc in retrieved_docs])
 
                 # 지식 노트 내용에서 기존에 저장된 학술 논문 출처 패턴 파싱 (전체 파일 단위)
+                # 질문과의 연관성 점수가 낮은 문서(PAPER_RELEVANCE_THRESHOLD 미만)는
+                # 관련 없는 논문이 계속 노출되는 문제를 막기 위해 제외한다.
+                PAPER_RELEVANCE_THRESHOLD = 0.7
                 seen_files_for_papers = set()
-                for doc in retrieved_docs:
+                for doc, score in retrieved_docs_with_scores:
+                    if score < PAPER_RELEVANCE_THRESHOLD:
+                        continue
                     src = doc.metadata.get("source")
                     if src and src not in seen_files_for_papers:
                         seen_files_for_papers.add(src)
