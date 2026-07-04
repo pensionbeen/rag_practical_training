@@ -13,3 +13,4 @@ uvicorn
 python-multipart
 requests
 pymupdf
+pytest

@@ -31,7 +31,7 @@
 
 - Python 3.10+
 - Node.js 18+
-- Google Gemini API Key ([Google AI Studio](https://aistudio.google.com/)에서 무료 발급)
+- OpenAI API Key ([OpenAI Platform](https://platform.openai.com/api-keys)에서 발급)
 
 ## 설치
 
@@ -50,7 +50,7 @@ cd ..
 프로젝트 루트에 `.env` 파일을 만들고 API 키를 설정합니다 (`.gitignore`에 등록되어 있어 커밋되지 않습니다):
 
 ```
-GOOGLE_API_KEY=your_google_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
 ```
 
 ## 실행

@@ -14,7 +14,10 @@ export async function askQuestion(query, vaultPath = null, signal = null) {
   })
 
   if (!response.ok) {
-    throw new Error(`API Error: ${response.status}`)
+    const errorBody = await response.json().catch(() => null)
+    const error = new Error(errorBody?.detail || `API Error: ${response.status}`)
+    error.status = response.status
+    throw error
   }
 
   return response.json()

@@ -37,12 +37,15 @@ export default function SearchPanel({ vaultPath }) {
 
   // When selected changes, fetch the top 5 similar concepts for the query/title
   useEffect(() => {
+    let cancelled = false
+
     if (selected) {
       setConceptName(selected.title)
-      
+
       const fetchSimilar = async () => {
         try {
           const similar = await getSimilarDocs(selected.title, vaultPath || null)
+          if (cancelled) return
           setSimilarConcepts(similar)
           if (similar.length > 0) {
             setSelectedConcept(similar[0])
@@ -52,6 +55,7 @@ export default function SearchPanel({ vaultPath }) {
             setSaveMode('new')
           }
         } catch (err) {
+          if (cancelled) return
           console.error('Failed to fetch similar concepts:', err)
           setSimilarConcepts([])
           setSaveMode('new')
@@ -63,7 +67,24 @@ export default function SearchPanel({ vaultPath }) {
       setSelectedConcept('')
       setSimilarConcepts([])
     }
+
+    return () => {
+      cancelled = true
+    }
   }, [selected, vaultPath])
+
+  // Esc 키로 검색 결과 상세 모달 닫기
+  useEffect(() => {
+    if (!selected) return
+
+    const handleKeyDown = e => {
+      if (e.key === 'Escape') {
+        setSelected(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selected])
 
   const handleSearch = async () => {
     if (loading) return
@@ -99,8 +120,14 @@ export default function SearchPanel({ vaultPath }) {
     } catch (err) {
       if (err.name === 'AbortError') {
         setStatus('empty')
-      } else {
+      } else if (err instanceof TypeError) {
+        // fetch가 아예 연결에 실패한 경우 (서버 다운, 네트워크 오류 등)
         setError('백엔드 서버에 연결할 수 없습니다. FastAPI 서버(uvicorn backend.main:app)가 실행 중인지 확인해 주세요.')
+        setResults([])
+        setStatus('error')
+      } else {
+        // 서버는 응답했지만 에러를 반환한 경우 (4xx/5xx) - 실제 원인을 보여준다
+        setError(`검색 중 오류가 발생했습니다${err.status ? ` (HTTP ${err.status})` : ''}: ${err.message}`)
         setResults([])
         setStatus('error')
       }

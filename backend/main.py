@@ -21,6 +21,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import ChatOpenAI
 
 from .pdf_parser import parse_pdf_to_chunks
+from .utils import filter_docs_by_relevance, sanitize_category_path
 
 # 환경 변수 로드
 load_dotenv()
@@ -31,10 +32,12 @@ if not os.getenv("OPENAI_API_KEY"):
 app = FastAPI(title="ObsiRAG Backend Server", version="1.0.0")
 
 # CORS 설정 (프론트엔드 호환성 확보)
+# 프론트엔드는 쿠키/자격증명을 전혀 사용하지 않으므로 allow_credentials는 False로 둔다.
+# (allow_origins="*"과 allow_credentials=True는 브라우저 스펙상 함께 쓸 수 없는 조합이다.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -56,6 +59,10 @@ embeddings = HuggingFaceEmbeddings(
     encode_kwargs={"normalize_embeddings": True}
 )
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+# 검색된 문서를 "관련 학술 논문" 노출 대상으로 볼지 판단하는 최소 연관성 점수(0~1).
+# 값이 낮을수록 논문이 더 자주(관련성이 약해도) 노출되고, 높을수록 더 엄격하게 걸러진다.
+PAPER_RELEVANCE_THRESHOLD = float(os.getenv("PAPER_RELEVANCE_THRESHOLD", "0.7"))
 
 
 # --- API 헬퍼 함수: 프리뷰 모델의 block-list 반환 호환성 확보 ---
@@ -126,6 +133,10 @@ class SimilarDocsRequest(BaseModel):
 
 
 # --- 공용 헬퍼 함수 ---
+# (순수 로직인 필터링/경로 새니타이즈는 backend.utils로 분리되어 있다 — 무거운 임포트 없이 단위 테스트 가능)
+_filter_docs_by_relevance = filter_docs_by_relevance
+_sanitize_category_path = sanitize_category_path
+
 
 def _resolve_vault(vault_path: str | None) -> Path:
     """요청에 사용자 지정 볼트 경로가 있으면 그 경로를, 없거나 유효하지 않으면 기본 볼트 경로를 반환합니다."""
@@ -150,44 +161,60 @@ def _write_concept_file(file_path: Path, concept_name: str, content: str) -> Non
             f.write(f"# {concept_name}\n\n{content}")
 
 
-def _invalidate_index_cache(current_vault: Path) -> None:
-    """볼트 내용이 바뀐 뒤(개념 저장, 복습 노트 추가 등) 캐시된 FAISS 인덱스를 삭제해 다음 조회 시 재구축을 유도합니다."""
+def _index_cache_paths(current_vault: Path) -> tuple[Path, Path]:
     vault_hash = hashlib.md5(str(current_vault.resolve()).encode("utf-8")).hexdigest()
     index_file = Path.cwd() / f"faiss_index_{vault_hash}.pkl"
-    if index_file.exists():
-        try:
-            index_file.unlink()
-        except Exception:
-            pass
+    manifest_file = Path.cwd() / f"faiss_index_{vault_hash}_manifest.json"
+    return index_file, manifest_file
+
+
+def _invalidate_index_cache(current_vault: Path) -> None:
+    """볼트 내용이 바뀐 뒤(개념 저장, 복습 노트 추가 등) 캐시된 FAISS 인덱스를 삭제해 다음 조회 시 재구축을 유도합니다."""
+    index_file, manifest_file = _index_cache_paths(current_vault)
+    for f in (index_file, manifest_file):
+        if f.exists():
+            try:
+                f.unlink()
+            except Exception:
+                pass
 
 
 def _build_or_load_index(current_vault: Path, md_files: list[Path]) -> FAISS:
     """볼트의 마크다운 문서를 청킹하여 FAISS 인덱스를 구축하거나, 최신 상태의 캐시가 있으면 그대로 로드합니다."""
-    docs = []
-    for file_path in md_files:
-        with open(file_path, "r", encoding="utf-8") as f:
-            text_content = f.read()
-            relative_source = file_path.relative_to(current_vault)
-            docs.append(Document(page_content=text_content, metadata={"source": str(relative_source)}))
-
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-    split_docs = text_splitter.split_documents(docs)
-
     # Windows 환경의 FAISS C++ 엔진이 한글 경로를 처리할 때 생기는 버그 우회를 위해 파이썬 레벨 직렬화 적용
-    vault_hash = hashlib.md5(str(current_vault.resolve()).encode("utf-8")).hexdigest()
-    index_file = Path.cwd() / f"faiss_index_{vault_hash}.pkl"
+    index_file, manifest_file = _index_cache_paths(current_vault)
+
+    # 파일 추가/삭제/수정 여부를 모두 감지하기 위해 (상대경로 -> mtime) 전체 매니페스트를 비교한다.
+    # mtime 최댓값만 비교하면 파일이 "삭제"된 경우를 감지하지 못하는 문제가 있었다.
+    current_manifest = {
+        str(f.relative_to(current_vault)): f.stat().st_mtime for f in md_files
+    }
 
     rebuild_index = True
-    if index_file.exists():
-        index_time = index_file.stat().st_mtime
-        latest_md_time = max((f.stat().st_mtime for f in md_files), default=0)
-        if latest_md_time < index_time:
-            rebuild_index = False
+    if index_file.exists() and manifest_file.exists():
+        try:
+            with open(manifest_file, "r", encoding="utf-8") as mf:
+                stored_manifest = json.load(mf)
+            rebuild_index = stored_manifest != current_manifest
+        except Exception:
+            rebuild_index = True
 
     if rebuild_index:
+        docs = []
+        for file_path in md_files:
+            with open(file_path, "r", encoding="utf-8") as f:
+                text_content = f.read()
+                relative_source = file_path.relative_to(current_vault)
+                docs.append(Document(page_content=text_content, metadata={"source": str(relative_source)}))
+
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+        split_docs = text_splitter.split_documents(docs)
+
         vectorstore = FAISS.from_documents(split_docs, embeddings)
         with open(index_file, "wb") as f:
             f.write(vectorstore.serialize_to_bytes())
+        with open(manifest_file, "w", encoding="utf-8") as mf:
+            json.dump(current_manifest, mf)
     else:
         with open(index_file, "rb") as f:
             serialized_data = f.read()
@@ -323,13 +350,10 @@ async def ask_question(request: AskRequest):
                 context = "\n\n".join([f"[{doc.metadata.get('source')}]:\n{doc.page_content}" for doc in retrieved_docs])
 
                 # 지식 노트 내용에서 기존에 저장된 학술 논문 출처 패턴 파싱 (전체 파일 단위)
-                # 질문과의 연관성 점수가 낮은 문서(PAPER_RELEVANCE_THRESHOLD 미만)는
-                # 관련 없는 논문이 계속 노출되는 문제를 막기 위해 제외한다.
-                PAPER_RELEVANCE_THRESHOLD = 0.7
+                # 질문과의 연관성 점수가 낮은 문서는 관련 없는 논문이 계속 노출되는 문제를 막기 위해 제외한다.
+                relevant_docs_for_papers = _filter_docs_by_relevance(retrieved_docs_with_scores, PAPER_RELEVANCE_THRESHOLD)
                 seen_files_for_papers = set()
-                for doc, score in retrieved_docs_with_scores:
-                    if score < PAPER_RELEVANCE_THRESHOLD:
-                        continue
+                for doc in relevant_docs_for_papers:
                     src = doc.metadata.get("source")
                     if src and src not in seen_files_for_papers:
                         seen_files_for_papers.add(src)
@@ -616,8 +640,7 @@ async def save_concept(request: SaveConceptRequest):
         # 2. 새로운 개념 노트 생성 시 카테고리 지정
         target_dir = current_vault
         if request.category:
-            safe_category = re.sub(r'[\\*?:"<>|]', "", request.category.strip())
-            target_dir = current_vault / safe_category
+            target_dir = _sanitize_category_path(request.category, current_vault)
             target_dir.mkdir(parents=True, exist_ok=True)
         file_path = target_dir / f"{clean_filename}.md"
 
@@ -800,7 +823,7 @@ async def upload_concepts(file: UploadFile = File(...), vault_path: str | None =
             if cat_match:
                 category_raw = cat_match.group(1).replace("[", "").replace("]", "").strip()
                 if category_raw and category_raw != "루트":
-                    category_path = re.sub(r'[\\*?:"<>|]', "", category_raw)
+                    category_path = category_raw
                 content = cat_match.group(2).strip()
             
             clean_filename = re.sub(r'[\\/*?:"<>|]', "", concept_name)
@@ -817,7 +840,7 @@ async def upload_concepts(file: UploadFile = File(...), vault_path: str | None =
             else:
                 target_dir = current_vault
                 if category_path:
-                    target_dir = current_vault / category_path
+                    target_dir = _sanitize_category_path(category_path, current_vault)
                     target_dir.mkdir(parents=True, exist_ok=True)
                 file_path = target_dir / f"{clean_filename}.md"
                 # 실시간으로 추가하여 이번 배치 업로드 도중 발생하는 중복도 방지

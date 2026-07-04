@@ -644,7 +644,9 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 154px;
+  /* '새 노트로 저장' + 카테고리 '직접 입력'(3번째 입력창까지 나오는) 케이스 기준으로 높이를 맞춰서
+     병합/저장 모드를 오갈 때 패널 크기가 덜컹거리며 커졌다 작아졌다 하지 않게 한다. */
+  min-height: 225px;
 }
 
 .obsidian-submit-button {
