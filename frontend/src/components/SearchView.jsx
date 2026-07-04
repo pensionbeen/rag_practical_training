@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import SearchPanel from './SearchPanel'
 import SearchSidebar from './SearchSidebar'
 
-export default function SearchView() {
+export default function SearchView({ vaultPath, onSaveVaultPath }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
@@ -13,8 +13,15 @@ export default function SearchView() {
           자료 설정
         </button>
       </div>
-      <SearchPanel />
-      <SearchSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <SearchPanel vaultPath={vaultPath} />
+      <SearchSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        vaultPath={vaultPath}
+        onSaveVaultPath={onSaveVaultPath}
+      />
     </div>
   )
 }
+
+

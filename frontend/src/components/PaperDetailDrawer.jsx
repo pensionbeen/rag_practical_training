@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Loader2 } from 'lucide-react'
 import { getSimilarDocs } from '../config/api'
 
-export default function PaperDetailDrawer({ paper, type, onClose, onSave, folders }) {
+export default function PaperDetailDrawer({ paper, type, onClose, onSave, folders, vaultPath, searchQuery }) {
   const [saveMode, setSaveMode] = useState('merge') // 'merge' or 'new'
   const [similarConcepts, setSimilarConcepts] = useState([])
   const [selectedConcept, setSelectedConcept] = useState('')
@@ -16,10 +16,11 @@ export default function PaperDetailDrawer({ paper, type, onClose, onSave, folder
     if (paper) {
       setConceptName(paper.title || '')
       
-      // Fetch top 5 similar concept notes based on paper title
+      // Fetch top 5 similar concept notes based on search query or paper title
       const fetchSimilar = async () => {
         try {
-          const similar = await getSimilarDocs(paper.title)
+          const searchTarget = searchQuery || paper.title
+          const similar = await getSimilarDocs(searchTarget, vaultPath || null)
           setSimilarConcepts(similar)
           if (similar.length > 0) {
             setSelectedConcept(similar[0])
@@ -40,7 +41,7 @@ export default function PaperDetailDrawer({ paper, type, onClose, onSave, folder
       setSelectedConcept('')
       setSimilarConcepts([])
     }
-  }, [paper])
+  }, [paper, vaultPath, searchQuery])
 
   const handleSave = async () => {
     let nameToSave = ''

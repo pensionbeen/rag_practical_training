@@ -51,7 +51,7 @@ const mockPapers = [
   }
 ]
 
-export default function PapersPanel() {
+export default function PapersPanel({ vaultPath }) {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [papers, setPapers] = useState([])
@@ -63,7 +63,10 @@ export default function PapersPanel() {
 
   const fetchDataList = async () => {
     try {
-      const [folderList, conceptList] = await Promise.all([getFolders(), getConcepts()])
+      const [folderList, conceptList] = await Promise.all([
+        getFolders(vaultPath || null),
+        getConcepts(vaultPath || null)
+      ])
       setFolders(folderList)
       setConcepts(conceptList)
     } catch (err) {
@@ -78,7 +81,7 @@ export default function PapersPanel() {
     fetchDataList()
 
     return () => window.removeEventListener('click', handleWindowClick)
-  }, [])
+  }, [vaultPath])
 
   const handleSearch = async () => {
     if (!query.trim()) return
@@ -105,8 +108,8 @@ export default function PapersPanel() {
   }
 
   const handleSaveConcept = async (conceptName, content, category) => {
-    await saveConcept(conceptName, content, category)
-    await reindexVault() // RAG 동기화
+    await saveConcept(conceptName, content, category, vaultPath || null)
+    await reindexVault(vaultPath || null) // RAG 동기화
     await fetchDataList()
   }
 
@@ -182,6 +185,8 @@ export default function PapersPanel() {
         onSave={handleSaveConcept}
         folders={folders}
         concepts={concepts}
+        vaultPath={vaultPath}
+        searchQuery={query}
       />
     </section>
   )
